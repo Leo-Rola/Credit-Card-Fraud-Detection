@@ -3,6 +3,11 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.decomposition import PCA, TruncatedSVD
+from sklearn.linear_model import LogisticRegression
+from sklearn.manifold import TSNE
+from sklearn.mixture import GaussianMixture
+from sklearn.neighbors import KNeighborsClassifier
 import plotly.graph_objs as go
 import plotly.figure_factory as ff
 from plotly import tools
@@ -18,20 +23,33 @@ from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_sco
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.ensemble import AdaBoostClassifier
 from catboost import CatBoostClassifier
-from sklearn import svm
-import lightgbm as lgb
 from lightgbm import LGBMClassifier
-import xgboost as xgb
+from sklearn import svm
 import os
 pd.set_option('display.max_columns', 100)
 
-DEBUG=False
+#COSE DA FA: K-FOLD, DOWNSAMPLING, UPSAMPLING, ENSEMBLE STRANI (CON C0 CLUSTER), 
+#TUNING CLASSIFICATORI IPERPARAMETRI, SALVARE IL MODELLO FINALE, 
+#AGGIORNARE IL README, FARE L'EVAL.PY, SCRIVERE E FARE COME SE FOSSE UN DEPLOYMENT
+
+#BESTS: CBC -> RFC -> ABC
 CHECK_DATA=False
-PREPROCESS_DATA=False
+CONF_MATR=False
+
+SCALE_TIME_AMOUNT=False
+DROP_FEATURES=False #always a good idea
+REMOVE_OUTLIERS=False
 RANDOMIZED_SEARCH=False
+PCAN=False
+TSVD=False
 
 RFC=False
-ABC=True
+ABC=False
+CBC=True
+LGBMC=False #improve with preprocessing, all parameters needed
+LRC=False
+SVMC=False#improve with preprocessing
+KNNC=False
 
 NUM_ESTIMATORS=100
 
@@ -78,6 +96,7 @@ def compute_metrics(Y,preds,proba):
 def main():
     #READ THE DATA
     data_df = pd.read_csv("creditcard.csv")
+    print(f'Number of initial total samples: {data_df.size}')
     if CHECK_DATA:
         #CHECH THE DATA
         print("Credit Card Fraud Detection data -  rows:",data_df.shape[0]," columns:", data_df.shape[1])
@@ -140,8 +159,7 @@ def main():
         In general, with just few exceptions (Time and Amount), the features distribution for legitimate transactions (values of Class = 0)
         is centered around 0, sometime with a long queue at one of the extremities. In the same time, the fraudulent transactions (values of Class = 1) have a skewed (asymmetric) distribution.
         '''
-    
-    if PREPROCESS_DATA:
+    if SCALE_TIME_AMOUNT:
         #SCALING OF TIME AND AMOUNT FEATURES
         # RobustScaler is less prone to outliers.
 
@@ -159,16 +177,53 @@ def main():
         data_df.insert(0, 'scaled_amount', scaled_amount)
         data_df.insert(1, 'scaled_time', scaled_time)
         #print(data_df.head())
-    
-    X = data_df.drop('Class', axis=1)
-    Y = data_df['Class']
+    if DROP_FEATURES:
+        data_df=data_df.drop('V15', axis=1)
+        data_df=data_df.drop('V26', axis=1)
+
+    train_df, test_df=train_test_split(data_df,test_size=TEST_SIZE,random_state=RANDOM_STATE)
+    print(f'Number of train samples: {train_df.size}')
+    print(f'Number of test samples: {test_df.size}')
+
+    if REMOVE_OUTLIERS:
+        #  -----> Removing Outliers
+        for k in train_df.keys() :
+            if k not in ['Time', 'Amount', 'Class']:
+                feat = train_df[k].loc[train_df['Class'] == 0].values
+                q25, q75 = np.percentile(feat, 25), np.percentile(feat, 75)
+                #print('Quartile 25: {} | Quartile 75: {}'.format(q25, q75))
+                feat_iqr = q75 - q25
+                #print('iqr: {}'.format(feat_iqr))
+
+                feat_cut_off = feat_iqr * 2.5
+                feat_lower, feat_upper = q25 - feat_cut_off, q75 + feat_cut_off
+                #print('Cut Off: {}'.format(feat_cut_off))
+                #print('feat Lower: {}'.format(feat_lower))
+                #print('feat Upper: {}'.format(feat_upper))
+
+                train_df = train_df.drop(train_df[((train_df[k] > feat_upper) | (train_df[k] < feat_lower)) & (train_df['Class']==0)].index)
+                #print('----' * 44)
+        print(f'Number of train samples after removing Class 0 outliers: {train_df.size}')
+
+
     #SIMPLE SPLIT BETWEEN TRAINING SET AND TESTING SET
-    X_train,X_test,Y_train,Y_test=train_test_split(X,Y,test_size=TEST_SIZE,random_state=RANDOM_STATE)
-    #CHECK DATA UNBALANCE AFTER THE SPLIT
-    print('Train No Frauds', round(Y_train.value_counts()[0]/len(Y_train) * 100,2), '% of the Train Set')
-    print('Train Frauds', round(Y_train.value_counts()[1]/len(Y_train) * 100,2), '% of the Train Set\n')
-    print('Test No Frauds', round(Y_test.value_counts()[0]/len(Y_test) * 100,2), '% of the Test Set')
-    print('Test Frauds', round(Y_test.value_counts()[1]/len(Y_test) * 100,2), '% of the Test Set\n')
+    X_train=train_df.drop('Class', axis=1)
+    X_test=test_df.drop('Class', axis=1)
+    Y_train=train_df['Class']
+    Y_test=test_df['Class']
+    #CHECK DATA UNBALANCE AFTER THE SPLIT AND PREPROCESSING
+    print('Train No Frauds', round(Y_train.value_counts()[0]/len(Y_train) * 100,2), '% of the Train Set,',Y_train.value_counts()[0],' samples\n')
+    print('Train Frauds', round(Y_train.value_counts()[1]/len(Y_train) * 100,2), '% of the Train Set,',Y_train.value_counts()[1],' samples\n')
+    print('Test No Frauds', round(Y_test.value_counts()[0]/len(Y_test) * 100,2), '% of the Test Set,',Y_test.value_counts()[0],' samples\n')
+    print('Test Frauds', round(Y_test.value_counts()[1]/len(Y_test) * 100,2), '% of the Test Set,',Y_test.value_counts()[1],' samples\n')
+    if PCAN:
+        # PCA Implementation
+        X_train = PCA(n_components=(len(X_train.keys())-2), random_state=RANDOM_STATE).fit_transform(X_train)
+        X_test = PCA(n_components=(len(X_test.keys())-2), random_state=RANDOM_STATE).fit_transform(X_test)
+    if TSVD:
+        # TruncatedSVD
+        X_train= TruncatedSVD(n_components=(len(X_train.keys())-2), algorithm='randomized', random_state=RANDOM_STATE).fit_transform(X_train)
+        X_test= TruncatedSVD(n_components=(len(X_test.keys())-2), algorithm='randomized', random_state=RANDOM_STATE).fit_transform(X_test)
     if RFC:
         if RANDOMIZED_SEARCH:
             # Number of trees in random forest
@@ -207,31 +262,88 @@ def main():
             rfc.fit(X_train, Y_train)
             rfc_preds = rfc.predict(X_test)
             rfc_preds_proba=rfc.predict_proba(X_test)[:, 1]
-            if DEBUG:
+            if CONF_MATR:
                 #CONFUSION MATRIX
                 create_confusion_matrix(Y_test, rfc_preds)
             compute_metrics(Y_test, rfc_preds, rfc_preds_proba)
-        if RANDOMIZED_SEARCH:
-            pass
-        else:
-            #RANDOM BALANCED FOREST CLASSIFIER
-            rfc_bal = RandomForestClassifier(class_weight='balanced',verbose=1, n_estimators=NUM_ESTIMATORS)
-            rfc_bal.fit(X_train, Y_train)
-            rfc_bal_preds = rfc_bal.predict(X_test)
-            rfc_bal_preds_proba=rfc_bal.predict_proba(X_test)[:, 1]
-            if DEBUG:
-                #CONFUSION MATRIX
-                create_confusion_matrix(Y_test, rfc_bal_preds) 
-            compute_metrics(Y_test, rfc_bal_preds, rfc_bal_preds_proba)
+
     if ABC:
         abc = AdaBoostClassifier(random_state=RANDOM_STATE, n_estimators=NUM_ESTIMATORS)
         abc.fit(X_train, Y_train)
         abc_preds = abc.predict(X_test)
         abc_preds_proba=abc.predict_proba(X_test)[:, 1]
-        if DEBUG:
+        if CONF_MATR:
             #CONFUSION MATRIX
             create_confusion_matrix(Y_test, abc_preds)
         compute_metrics(Y_test, abc_preds, abc_preds_proba)
+
+    if CBC:
+        cbc = CatBoostClassifier(random_seed = RANDOM_STATE, metric_period = VERBOSE_EVAL)
+        cbc.fit(X_train, Y_train)
+        cbc_preds = cbc.predict(X_test)
+        cbc_preds_proba=cbc.predict_proba(X_test)[:, 1]
+        if CONF_MATR:
+            #CONFUSION MATRIX
+            create_confusion_matrix(Y_test, cbc_preds)
+        compute_metrics(Y_test, cbc_preds, cbc_preds_proba)
+    if LGBMC:
+        lgbmc = LGBMClassifier(
+                  nthread=-1,
+                  n_estimators=2000,
+                  learning_rate=0.01,
+                  num_leaves=80,
+                  colsample_bytree=0.98,
+                  subsample=0.78,
+                  reg_alpha=0.04,
+                  reg_lambda=0.073,
+                  subsample_for_bin=50,
+                  boosting_type='gbdt',
+                  is_unbalance=False,
+                  min_split_gain=0.025,
+                  min_child_weight=40,
+                  min_child_samples=510,
+                  objective='binary',
+                  metric='auc',
+                  silent=-1,
+                  verbose=-1,
+                  feval=None)
+        lgbmc.fit(X_train, Y_train)
+        lgbmc_preds = lgbmc.predict(X_test)
+        lgbmc_preds_proba=lgbmc.predict_proba(X_test)[:, 1]
+        if CONF_MATR:
+            #CONFUSION MATRIX
+            create_confusion_matrix(Y_test, lgbmc_preds)
+        compute_metrics(Y_test, lgbmc_preds, lgbmc_preds_proba)
+    if LRC:
+        lrc = LogisticRegression()
+        lrc.fit(X_train, Y_train)
+        lrc_preds = lrc.predict(X_test)
+        lrc_preds_proba=lrc.predict_proba(X_test)[:, 1]
+        if CONF_MATR:
+            #CONFUSION MATRIX
+            create_confusion_matrix(Y_test, lrc_preds)
+        compute_metrics(Y_test, lrc_preds, lrc_preds_proba)
+    if SVMC:#RBF
+        svmc = svm.SVC(probability=True, kernel='rbf')
+        svmc.fit(X_train, Y_train)
+        svmc_preds = svmc.predict(X_test)
+        svmc_preds_proba=svmc.predict_proba(X_test)[:, 1]
+        if CONF_MATR:
+            #CONFUSION MATRIX
+            create_confusion_matrix(Y_test, svmc_preds)
+        compute_metrics(Y_test, svmc_preds, svmc_preds_proba)
+    if KNNC:
+        knnc = KNeighborsClassifier()
+        knnc.fit(X_train, Y_train)
+        knnc_preds = knnc.predict(X_test)
+        knnc_preds_proba=knnc.predict_proba(X_test)[:, 1]
+        if CONF_MATR:
+            #CONFUSION MATRIX
+            create_confusion_matrix(Y_test, knnc_preds)
+        compute_metrics(Y_test, knnc_preds, knnc_preds_proba)     
+        
+        
+    
         
 if __name__ == "__main__":
     main()
