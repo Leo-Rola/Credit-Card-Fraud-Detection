@@ -17,7 +17,7 @@ from plotly.offline import download_plotlyjs, plot
 import gc
 from datetime import datetime 
 from sklearn.preprocessing import StandardScaler, RobustScaler
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.model_selection import KFold
 from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score
 from sklearn.ensemble import RandomForestClassifier
@@ -26,6 +26,10 @@ from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
 from sklearn import svm
 import os
+from imblearn.pipeline import make_pipeline as imbalanced_make_pipeline
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import NearMiss
+from imblearn.metrics import classification_report_imbalanced
 pd.set_option('display.max_columns', 100)
 
 #COSE DA FA: K-FOLD, DOWNSAMPLING, UPSAMPLING, ENSEMBLE STRANI (CON C0 CLUSTER), 
@@ -35,6 +39,8 @@ pd.set_option('display.max_columns', 100)
 #BESTS: CBC -> RFC -> ABC
 CHECK_DATA=False
 CONF_MATR=False
+K_FOLD=False
+SMT=True
 
 SCALE_TIME_AMOUNT=False
 DROP_FEATURES=False #always a good idea
@@ -279,7 +285,36 @@ def main():
 
     if CBC:
         cbc = CatBoostClassifier(random_seed = RANDOM_STATE, metric_period = VERBOSE_EVAL)
-        cbc.fit(X_train, Y_train)
+        '''
+        cbc = CatBoostClassifier(iterations=1000,
+                             learning_rate=0.02,
+                             depth=12,
+                             eval_metric='AUC',
+                             random_seed = RANDOM_STATE,
+                             bagging_temperature = 0.2,
+                             od_type='Iter',
+                             metric_period = VERBOSE_EVAL,
+                             od_wait=100)
+        '''
+        if K_FOLD:
+            sss = StratifiedKFold(n_splits=5, random_state=RANDOM_STATE, shuffle=True)
+            for train_index, val_index in sss.split(X_train, Y_train):
+                #print("Train:", train_index, "Val:", val_index)
+                sss_X_train, sss_X_val = X_train.iloc[train_index], X_train.iloc[val_index]
+                sss_Y_train, sss_Y_val = Y_train.iloc[train_index], Y_train.iloc[val_index]
+                if SMT:
+                    smt=SMOTE(sampling_strategy='minority', random_state=RANDOM_STATE)
+                    sss_smt_X_train, sss_smt_Y_train = smt.fit_resample(sss_X_train, sss_Y_train)
+                    cbc.fit(sss_smt_X_train, sss_smt_Y_train)
+                else:
+                    cbc.fit(sss_X_train, sss_Y_train)
+        else:
+            if SMT:
+                smt=SMOTE(sampling_strategy='minority', random_state=RANDOM_STATE)
+                smt_X_train, smt_Y_train = smt.fit_resample(X_train, Y_train)
+                cbc.fit(smt_X_train, smt_Y_train)
+            else:
+                cbc.fit(X_train, Y_train)
         cbc_preds = cbc.predict(X_test)
         cbc_preds_proba=cbc.predict_proba(X_test)[:, 1]
         if CONF_MATR:
