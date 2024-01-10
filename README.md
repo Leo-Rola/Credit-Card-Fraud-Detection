@@ -19,8 +19,8 @@ The main files are ```train.py``` and ```predict.py```. They can be personalized
 The first one, having as input the data, it explores them, it preprocesses them and split them into train and set data (80%-20%). Then it trains some classifiers and evaluates them, with the metrics stored in ```utils.py``` file.
 Optionally it gives as output also the confusion matrices (by default no) and the pickle file of the best classifier (by default no).
 The default configurations are those that create the best classifier found out.      
-The second file instead is designed to be as concise as possible, so by default there aren't print in stdout. Having as input the data and the pickle of the best model trained in ```train.py```, it evaluates it and it computes the metrics and the confusion matrix optionally (by default no), and it gives as output a csv file with the predictions (by default yes).    
-The ```final_model.pickle``` file encloses the best classifier found, while the ```prediction.csv``` file is a list of all the predictions of the given data, and so is the final output.
+The second file instead is designed to be as concise as possible, so by default there aren't print in stdout. Having as input the data and the pickle of the best model trained in ```train.py```, it evaluates it and it computes the metrics and the confusion matrix optionally (by default no), and it gives as output a csv file with the predictions (by default yes).  By default it doesn't split the data in entrance.  
+The ```final_model.pickle``` file encloses the best classifier found, while the ```prediction.csv``` file is a list of all the predictions of the test set of the given data, split in the same way of the ```train.py```, and so is the final output.
 ### Data Exploration
 The first data analyses tell that the samples are a lot (284807) and that the features are 30: time, amount and the other ones, obtained by performing a PCA on the original features for privacy reasons.    
 Then there is one more column that represents the class, 0 for a non-fraudolent transaction and 1 for a fraudolent one.    
