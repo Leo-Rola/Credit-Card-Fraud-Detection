@@ -6,5 +6,6 @@ pip install seaborn
 pip install plotly
 pip install scikit-learn
 pip install catboost
+pip install xgboost
 pip install lightgbm
 pip install imblearn
