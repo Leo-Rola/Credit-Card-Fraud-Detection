@@ -35,6 +35,9 @@ from imblearn.under_sampling import NearMiss
 from imblearn.combine import SMOTEENN, SMOTETomek
 from imblearn.ensemble import EasyEnsembleClassifier, RUSBoostClassifier, BalancedRandomForestClassifier, BalancedBaggingClassifier
 from imblearn.metrics import classification_report_imbalanced
+import pickle
+from utils import *
+
 pd.set_option('display.max_columns', 100)
 
 #COSE DA FA: K-FOLD, DOWNSAMPLING, UPSAMPLING, ENSEMBLE STRANI (CON C0 CLUSTER), 
@@ -45,7 +48,7 @@ pd.set_option('display.max_columns', 100)
 CHECK_DATA=False
 CONF_MATR=True
 UPSAMP=False
-DOWNSAMP=False
+DOWNSAMP=True
 UPDOWNSAMP=False #it takes a little long
 
 SCALE_TIME_AMOUNT=True
@@ -54,7 +57,7 @@ REMOVE_OUTLIERS=False
 PCAN=False
 TSVD=False
 
-RANDOMIZED_SEARCH=True
+RANDOMIZED_SEARCH=False
 K_FOLD=False
 
 NC=False
@@ -63,7 +66,7 @@ RC=False
 RFC=False
 ABC=False
 CBC=False #20 - 2
-XGBC=True #20 - 3
+XGBC=False #20 - 3
 LGBMC=False#improve with preprocessing, all parameters needed
 LRC=False
 SVMC=False#improve with preprocessing
@@ -76,7 +79,9 @@ BRFC=False
 BBC=False
 
 INTER_WRONG_PRED=False
-ENSEMBLE=False #19 3
+#ENSEMBLE OF CBC AND XGBC MODELS (THE BEST)
+ENSEMBLE=True #19 3
+PERSIST_ENSEMBLE=False
 
 #TRAIN/TEST SPLIT
 TEST_SIZE = 0.20 # test size using_train_test_split
@@ -89,40 +94,28 @@ NUM_ESTIMATORS=100
 RANDOM_STATE = 2018
 VERBOSE_EVAL = 50 #Print out metric result
 
-def create_confusion_matrix(Y,preds):
-    cm = pd.crosstab(Y, preds, rownames=['Actual'], colnames=['Predicted'])
-    fig, (ax1) = plt.subplots(ncols=1, figsize=(5,5))
-    sns.heatmap(cm, 
-                xticklabels=['Not Fraud', 'Fraud'],
-                yticklabels=['Not Fraud', 'Fraud'],
-                annot=True,ax=ax1,
-                linewidths=.2,linecolor="Darkblue", cmap="Blues")
-    plt.title('Confusion Matrix', fontsize=14)
-    plt.show()
-    plt.close()
-
-def compute_metrics(Y,preds,proba):
-    #AUROC METRIC
-    rfc_auroc=roc_auc_score(Y, proba)
-    print(f'RFC AUROC score: {rfc_auroc}\n')
-    #AUPRC OR AVERAGE-PRECISION METRIC (SUITABLE FOR UNBALANCED DATASETS)
-    rfc_auprc=average_precision_score(Y, proba)
-    print(f'RFC AUPRC score: {rfc_auprc}\n')
-    #ACCURACY METRIC
-    rfc_accuracy=accuracy_score(Y, preds)
-    print(f'Accuracy score: {rfc_accuracy}\n')
-
-def find_intersection_of_wrong_predictions(ground_truth, pred1, pred2):
-    # Find indices where both classifiers make incorrect predictions
-    incorrect_pred1 = np.where(pred1 != ground_truth)[0]
-    print(f'Number of wrong predictions of Classifier1: {len(incorrect_pred1)}')
-    incorrect_pred2 = np.where(pred2 != ground_truth)[0]
-    print(f'Number of wrong predictions of Classifier2: {len(incorrect_pred2)}')
-
-    # Find the intersection of the sets of incorrect predictions
-    intersection = set(incorrect_pred1) & set(incorrect_pred2)
-    print(f'Number of the intersection of the wrong predictions of both(the less the better): {len(intersection)}')
-
+def make_k_fold(model, X_train, Y_train):
+    sss = StratifiedKFold(n_splits=NUMBER_KFOLDS, random_state=RANDOM_STATE, shuffle=True)
+    for index, train_index, val_index in enumerate(sss.split(X_train, Y_train)):
+        #print("Train:", train_index, "Val:", val_index)
+        print(f'k-fold round {index}/{NUMBER_KFOLDS}\n')
+        sss_X_train, sss_X_val = X_train.iloc[train_index], X_train.iloc[val_index]
+        sss_Y_train, sss_Y_val = Y_train.iloc[train_index], Y_train.iloc[val_index]
+        if UPSAMP:
+            #upsamp=ADASYN(sampling_strategy='minority', random_state=RANDOM_STATE)
+            upsamp=BorderlineSMOTE(sampling_strategy='minority', random_state=RANDOM_STATE)
+            sss_upsamp_X_train, sss_upsamp_Y_train = upsamp.fit_resample(sss_X_train, sss_Y_train)
+            model.fit(sss_upsamp_X_train, sss_upsamp_Y_train)
+        elif DOWNSAMP:
+            downsamp=NearMiss(sampling_strategy={1: 50},version=3)#sampling_strategy='majority',
+            sss_downsamp_X_train, sss_downsamp_Y_train = downsamp.fit_resample(sss_X_train, sss_Y_train)
+            model.fit(sss_downsamp_X_train, sss_downsamp_Y_train)
+        elif UPDOWNSAMP:
+            updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)
+            sss_updownsamp_X_train, sss_updownsamp_Y_train = updownsamp.fit_resample(sss_X_train, sss_Y_train)
+            model.fit(sss_updownsamp_X_train, sss_updownsamp_Y_train)
+        else:
+            model.fit(sss_X_train, sss_Y_train)
 
 def main():
     #READ THE DATA
@@ -184,8 +177,7 @@ def main():
         plt.show()
         '''
         For some of the features we can observe a good selectivity in terms of distribution for the two values of Class:
-        V4, V11 have clearly separated distributions for Class values 0 and 1, V12, V14, V18 are partially separated,
-        V1, V2, V3, V10 have a quite distinct profile, whilse V25, V26, V28 have similar profiles for the two values of Class.
+        only V15, V24, V25, V26 have similar profiles for the two values of Class.
         In general, with just few exceptions (Time and Amount), the features distribution for legitimate transactions (values of Class = 0)
         is centered around 0, sometime with a long queue at one of the extremities. In the same time, the fraudulent transactions (values of Class = 1) have a skewed (asymmetric) distribution.
         '''
@@ -236,7 +228,6 @@ def main():
         print(f'Number of train samples after removing Class 0 outliers: {train_df.size}')
 
 
-    #SIMPLE SPLIT BETWEEN TRAINING SET AND TESTING SET
     X_train=train_df.drop('Class', axis=1)
     X_test=test_df.drop('Class', axis=1)
     Y_train=train_df['Class']
@@ -265,16 +256,37 @@ def main():
         plt.xlabel('Number of clusters')
         plt.ylabel('Silhouette Score')
         plt.show()
+        '''
+        We can observe that there isn't a number k of clusters that stands out and that divides well
+        the training set samples of class 0. Other types of clustering can certainly be tested, 
+        but it would take more time
+        '''
+    if UPSAMP and (BBC is False) and (K_FOLD is False):
+        #UPSAMPLING
+        #upsamp=ADASYN(sampling_strategy='minority', random_state=RANDOM_STATE) #15 37
+        upsamp=BorderlineSMOTE(sampling_strategy='minority', random_state=RANDOM_STATE)
+        X_train, Y_train = upsamp.fit_resample(X_train, Y_train)
+    elif DOWNSAMP and (BBC is False) and (K_FOLD is False):
+        #DOWNSAMPLING
+        downsamp=NearMiss(sampling_strategy={1: 50},version=1)#sampling_strategy='majority'
+        X_train, Y_train = downsamp.fit_resample(X_train, Y_train)
+    elif UPDOWNSAMP and (BBC is False) and (K_FOLD is False):
+        #UPSAMPLING WITH DATA CLEANING
+        updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)#, smote=upsamp
+        X_train, Y_train = updownsamp.fit_resample(X_train, Y_train)
     #CHECK DATA UNBALANCE AFTER THE SPLIT AND PREPROCESSING
     print('Train No Frauds', round(Y_train.value_counts()[0]/len(Y_train) * 100,2), '% of the Train Set,',Y_train.value_counts()[0],' samples\n')
     print('Train Frauds', round(Y_train.value_counts()[1]/len(Y_train) * 100,2), '% of the Train Set,',Y_train.value_counts()[1],' samples\n')
     print('Test No Frauds', round(Y_test.value_counts()[0]/len(Y_test) * 100,2), '% of the Test Set,',Y_test.value_counts()[0],' samples\n')
     print('Test Frauds', round(Y_test.value_counts()[1]/len(Y_test) * 100,2), '% of the Test Set,',Y_test.value_counts()[1],' samples\n')
-    classificators=list()
     predictions=list()
+    #THOSE OTHER 2 ACTUALLY NEVER USED
+    classificators=list()
     probabilities=list()
+
+    #THE FOLLOWING TWO CLASSIFIERS ARE DUMMY AND THEY ARE NEEDED TO FIND OUT THE BASELINE
     if NC:
-        #FOR THE BASELINE
+        #NAIVE CLASSIFIER (ALWAYS PREDICT CLASS 0)
         class AlwaysClassZeroClassifier:
             def fit(self, X, Y):
                 pass  # No training needed
@@ -297,8 +309,8 @@ def main():
             #CONFUSION MATRIX
             create_confusion_matrix(Y_test, nc_preds)
         compute_metrics(Y_test, nc_preds, nc_preds_proba)
-
     if RC:
+        #RANDOM CLASSIFIER
         class RandomClassifier:
             def fit(self, X, Y):
                 self.probs_=None
@@ -326,6 +338,7 @@ def main():
             create_confusion_matrix(Y_test, rc_preds)
         compute_metrics(Y_test, rc_preds, rc_preds_proba)
 
+    #THE FOLLOWING IS A COLLECTION OF TESTED CLASSIFIERS
     if RFC:
         if RANDOMIZED_SEARCH:
             # Number of trees in random forest
@@ -360,7 +373,6 @@ def main():
             compute_metrics(Y_test, rfc_preds, rfc_preds_proba)
             predictions.append(('RFC',rfc_preds))
         else:
-            #RANDOM FOREST CLASSIFIER
             rfc = RandomForestClassifier(verbose=1, n_estimators=NUM_ESTIMATORS)
             rfc.fit(X_train, Y_train)
             rfc_preds = rfc.predict(X_test)
@@ -370,7 +382,6 @@ def main():
                 create_confusion_matrix(Y_test, rfc_preds)
             compute_metrics(Y_test, rfc_preds, rfc_preds_proba)
             predictions.append(('RFC',rfc_preds))
-
     if ABC:
         model = CatBoostClassifier(random_seed = RANDOM_STATE, metric_period = VERBOSE_EVAL)
         '''
@@ -433,40 +444,9 @@ def main():
                              od_wait=100)
         
         if K_FOLD:
-            sss = StratifiedKFold(n_splits=NUMBER_KFOLDS, random_state=RANDOM_STATE, shuffle=True)
-            for train_index, val_index in sss.split(X_train, Y_train):
-                #print("Train:", train_index, "Val:", val_index)
-                sss_X_train, sss_X_val = X_train.iloc[train_index], X_train.iloc[val_index]
-                sss_Y_train, sss_Y_val = Y_train.iloc[train_index], Y_train.iloc[val_index]
-                if UPSAMP:
-                    upsamp=ADASYN(sampling_strategy='minority', random_state=RANDOM_STATE)
-                    sss_upsamp_X_train, sss_upsamp_Y_train = upsamp.fit_resample(sss_X_train, sss_Y_train)
-                    cbc.fit(sss_upsamp_X_train, sss_upsamp_Y_train)
-                elif DOWNSAMP:
-                    downsamp=NearMiss(sampling_strategy='majority', version=3)
-                    sss_downsamp_X_train, sss_downsamp_Y_train = downsamp.fit_resample(sss_X_train, sss_Y_train)
-                    cbc.fit(sss_downsamp_X_train, sss_downsamp_Y_train)
-                elif UPDOWNSAMP:
-                    updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)
-                    sss_updownsamp_X_train, sss_updownsamp_Y_train = updownsamp.fit_resample(sss_X_train, sss_Y_train)
-                    cbc.fit(sss_updownsamp_X_train, sss_updownsamp_Y_train)
-                else:
-                    cbc.fit(sss_X_train, sss_Y_train)
-        else:
-            if UPSAMP:
-                upsamp=ADASYN(sampling_strategy='minority', random_state=RANDOM_STATE)
-                upsamp_X_train, upsamp_Y_train = upsamp.fit_resample(X_train, Y_train)
-                cbc.fit(upsamp_X_train, upsamp_Y_train)
-            elif DOWNSAMP:
-                downsamp=NearMiss(sampling_strategy='majority',version=3)
-                downsamp_X_train, downsamp_Y_train = downsamp.fit_resample(X_train, Y_train)
-                cbc.fit(downsamp_X_train, downsamp_Y_train)
-            elif UPDOWNSAMP:
-                updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)#, smote=upsamp
-                updownsamp_X_train, updownsamp_Y_train = updownsamp.fit_resample(X_train, Y_train)
-                cbc.fit(updownsamp_X_train, updownsamp_Y_train)
-            else:
-                cbc.fit(X_train, Y_train)
+            make_k_fold(model=cbc, X_train=X_train, Y_train=Y_train)
+        else:    
+            cbc.fit(X_train, Y_train)
         cbc_preds = cbc.predict(X_test)
         cbc_preds_proba=cbc.predict_proba(X_test)[:, 1]
         if CONF_MATR:
@@ -571,6 +551,8 @@ def main():
         compute_metrics(Y_test, mlpc_preds, mlpc_preds_proba)
         predictions.append(('MLPC',mlpc_preds))
 
+    #THE FOLLOWING EMBEDDED CLASSIFIERS ARE THOUGHT FOR UNBALANCED DATA DISTRIBUTIONS,
+    #BUT THE RESULTS WERE NOT SO GOOD SO THEY HAVEN'T BEEN USED
     if EEC:
         model=CatBoostClassifier(random_seed = RANDOM_STATE, metric_period = VERBOSE_EVAL)
         eec = EasyEnsembleClassifier(estimator=model,random_state=RANDOM_STATE, verbose=1, n_estimators=NUM_ESTIMATORS, sampling_strategy='majority') 
@@ -615,6 +597,8 @@ def main():
             create_confusion_matrix(Y_test, bbc_preds)
         compute_metrics(Y_test, bbc_preds, bbc_preds_proba) 
 
+    #MAKE A STUFY ABOUT THE INTERSECTION OF THE WRONG PREDICTIONS OF THE CLASSIFIERS,
+    #TO DECIDE WHICH ONES HAVE TO BE PUT IN THE FINAL ENSEMBLE. CBC CLASSIFIER IS MANDATORY
     if INTER_WRONG_PRED:
         main_pred_index=None
         for i,pred in enumerate(predictions):
@@ -627,9 +611,10 @@ def main():
         for i,pred in enumerate(predictions):
             print(pred[0])
             find_intersection_of_wrong_predictions(Y_test, main_pred[1], pred[1])
-        
 
+    #THE FINAL ENSEMBLE CLASSIFIER THAT IN THIS CASE FUSE OTHER 2 BASE CLASSIFIER   
     if ENSEMBLE:
+        #PUT TOGETHER THE BEST 2 CLASSIFIERS FOUND AND MAKE PREDICTIONS WITH MAJORITY VOTE
         cbc = CatBoostClassifier(iterations=1000,
                              learning_rate=0.02,
                              depth=12,
@@ -646,14 +631,9 @@ def main():
                                      ('CBC', cbc), 
                                      ('XGBC', xgbc), 
     
-                                    ], verbose=True, voting='soft')
-        if K_FOLD:
-            sss = StratifiedKFold(n_splits=NUMBER_KFOLDS, random_state=RANDOM_STATE, shuffle=True)
-            for train_index, val_index in sss.split(X_train, Y_train):
-                #print("Train:", train_index, "Val:", val_index)
-                sss_X_train, sss_X_val = X_train.iloc[train_index], X_train.iloc[val_index]
-                sss_Y_train, sss_Y_val = Y_train.iloc[train_index], Y_train.iloc[val_index]
-                ensemble.fit(sss_X_train, sss_Y_train)
+                                    ], verbose=True, voting='soft')  
+        if K_FOLD: #IN THIS CASE K_FOLD HAS POORER PERFORMANCES
+            make_k_fold(model=ensemble, X_train=X_train, Y_train=Y_train)
         else:
             ensemble.fit(X_train, Y_train)
         ensemble_preds = ensemble.predict(X_test)
@@ -662,6 +642,10 @@ def main():
             #CONFUSION MATRIX
             create_confusion_matrix(Y_test, ensemble_preds)
         compute_metrics(Y_test, ensemble_preds, ensemble_preds_proba)
+        if PERSIST_ENSEMBLE:
+            #MODEL PERSISTANCE WITH PICKLE
+            with open('final_model.pickle', 'wb') as model_f:
+                pickle.dump(ensemble, model_f, protocol=pickle.HIGHEST_PROTOCOL)
       
         
         
