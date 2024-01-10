@@ -1,78 +1,77 @@
 import sys
+import pickle
 import pandas as pd 
 import numpy as np
-import matplotlib
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.graph_objs as go
+import plotly.figure_factory as ff
+from plotly import tools
+from plotly.offline import download_plotlyjs, plot
+
 from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.linear_model import LogisticRegression
 from sklearn.manifold import TSNE
 from sklearn.mixture import GaussianMixture
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
-import plotly.graph_objs as go
-import plotly.figure_factory as ff
-from plotly import tools
-from plotly.offline import download_plotlyjs, plot
-
-
-import gc
-from datetime import datetime 
 from sklearn.preprocessing import StandardScaler, RobustScaler
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.cluster import KMeans, SpectralClustering
 from sklearn.metrics import roc_auc_score, average_precision_score, accuracy_score, silhouette_score
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.ensemble import AdaBoostClassifier
+from sklearn import svm
 from catboost import CatBoostClassifier
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
-from sklearn import svm
-import os
 from imblearn.pipeline import make_pipeline as imbalanced_make_pipeline
 from imblearn.over_sampling import SMOTE, BorderlineSMOTE, SVMSMOTE,KMeansSMOTE,ADASYN
 from imblearn.under_sampling import NearMiss
 from imblearn.combine import SMOTEENN, SMOTETomek
 from imblearn.ensemble import EasyEnsembleClassifier, RUSBoostClassifier, BalancedRandomForestClassifier, BalancedBaggingClassifier
 from imblearn.metrics import classification_report_imbalanced
-import pickle
+
 from utils import *
 
 pd.set_option('display.max_columns', 100)
 
-#COSE DA FA: K-FOLD, DOWNSAMPLING, UPSAMPLING, ENSEMBLE STRANI (CON C0 CLUSTER), 
-#TUNING CLASSIFICATORI IPERPARAMETRI, SALVARE IL MODELLO FINALE, 
-#AGGIORNARE IL README, FARE L'EVAL.PY, SCRIVERE E FARE COME SE FOSSE UN DEPLOYMENT
-
 #BESTS: CBC -> XGBC -> RFC -> MLPC -> LGBMC 
 CHECK_DATA=False
-CONF_MATR=True
-UPSAMP=False
-DOWNSAMP=True
-UPDOWNSAMP=False #it takes a little long
+CONF_MATR=False
 
-SCALE_TIME_AMOUNT=True
+UPSAMP=False
+DOWNSAMP=False
+UPDOWNSAMP=False #it takes a little long
+SCALE_TIME_AMOUNT=True #always a good idea
 DROP_FEATURES=True #always a good idea
 REMOVE_OUTLIERS=False
 PCAN=False
 TSVD=False
 
+#HYPERPARAMETER TUNING
+#used only in RFC and XGBC
 RANDOMIZED_SEARCH=False
-K_FOLD=False
 
+#CROSS-VALIDATION
+#used only in CBC and ENSEMBLE
+K_FOLD=False
+NUMBER_KFOLDS = 5 #number of KFolds for cross-validation
+
+#DUMMY CLASSIFIERS FOR THE BASELINE
 NC=False
 RC=False
-
+#CLASSIFIERS TESTED
 RFC=False
 ABC=False
-CBC=False #20 - 2
-XGBC=False #20 - 3
-LGBMC=False#improve with preprocessing, all parameters needed
+CBC=False #20 FN - 2 FP  (BEST ONE)
+XGBC=False #20 FN - 3 FP  (SECOND BEST)
+LGBMC=False
 LRC=False
-SVMC=False#improve with preprocessing
-KNNC=False#improve with preprocessing
-MLPC=False#improve with preprocessing
-
+SVMC=False
+KNNC=False
+MLPC=False
+#EMBEDDED CLASSIFIERS THOUGHT FOR UNBALANCED DATA
 EEC=False
 RBC=False
 BRFC=False
@@ -80,14 +79,14 @@ BBC=False
 
 INTER_WRONG_PRED=False
 #ENSEMBLE OF CBC AND XGBC MODELS (THE BEST)
-ENSEMBLE=True #19 3
+ENSEMBLE=True #19 FN - 3 FP
 PERSIST_ENSEMBLE=False
+
+INPUT_DATA_PATH="creditcard.csv"
+OUTPUT_MODEL_PATH="final_model.pickle"
 
 #TRAIN/TEST SPLIT
 TEST_SIZE = 0.20 # test size using_train_test_split
-
-#CROSS-VALIDATION
-NUMBER_KFOLDS = 5 #number of KFolds for cross-validation
 
 #Common Classifiers parameters
 NUM_ESTIMATORS=100
@@ -111,7 +110,8 @@ def make_k_fold(model, X_train, Y_train):
             sss_downsamp_X_train, sss_downsamp_Y_train = downsamp.fit_resample(sss_X_train, sss_Y_train)
             model.fit(sss_downsamp_X_train, sss_downsamp_Y_train)
         elif UPDOWNSAMP:
-            updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)
+            #updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)
+            updownsamp=SMOTETomek(sampling_strategy='minority', random_state=RANDOM_STATE)
             sss_updownsamp_X_train, sss_updownsamp_Y_train = updownsamp.fit_resample(sss_X_train, sss_Y_train)
             model.fit(sss_updownsamp_X_train, sss_updownsamp_Y_train)
         else:
@@ -119,7 +119,7 @@ def make_k_fold(model, X_train, Y_train):
 
 def main():
     #READ THE DATA
-    data_df = pd.read_csv("creditcard.csv")
+    data_df = pd.read_csv(INPUT_DATA_PATH)
     print("Credit Card Fraud Detection data -  rows:",data_df.shape[0]," columns:", data_df.shape[1])
     if CHECK_DATA:
         #CHECH THE DATA
@@ -268,11 +268,12 @@ def main():
         X_train, Y_train = upsamp.fit_resample(X_train, Y_train)
     elif DOWNSAMP and (BBC is False) and (K_FOLD is False):
         #DOWNSAMPLING
-        downsamp=NearMiss(sampling_strategy={1: 50},version=1)#sampling_strategy='majority'
+        downsamp=NearMiss(sampling_strategy={1: 50},version=3)#sampling_strategy='majority'
         X_train, Y_train = downsamp.fit_resample(X_train, Y_train)
     elif UPDOWNSAMP and (BBC is False) and (K_FOLD is False):
         #UPSAMPLING WITH DATA CLEANING
-        updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)#, smote=upsamp
+        #updownsamp=SMOTEENN(sampling_strategy='minority', random_state=RANDOM_STATE)#, smote=upsamp
+        updownsamp=SMOTETomek(sampling_strategy='minority', random_state=RANDOM_STATE)
         X_train, Y_train = updownsamp.fit_resample(X_train, Y_train)
     #CHECK DATA UNBALANCE AFTER THE SPLIT AND PREPROCESSING
     print('Train No Frauds', round(Y_train.value_counts()[0]/len(Y_train) * 100,2), '% of the Train Set,',Y_train.value_counts()[0],' samples\n')
@@ -644,7 +645,7 @@ def main():
         compute_metrics(Y_test, ensemble_preds, ensemble_preds_proba)
         if PERSIST_ENSEMBLE:
             #MODEL PERSISTANCE WITH PICKLE
-            with open('final_model.pickle', 'wb') as model_f:
+            with open(OUTPUT_MODEL_PATH, 'wb') as model_f:
                 pickle.dump(ensemble, model_f, protocol=pickle.HIGHEST_PROTOCOL)
       
         

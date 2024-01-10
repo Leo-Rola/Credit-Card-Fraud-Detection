@@ -12,16 +12,22 @@ VERBOSE=False
 CONF_MATR=False
 METRICS=False
 SPLIT_DATASET=False
+PERSIST_PREDICTION=True
+
+INPUT_DATA_PATH="creditcard.csv"
+INPUT_MODEL_PATH="final_model.pickle"
+OUTPUT_PREDICTION_PATH="prediction.csv"
 
 TEST_SIZE=0.20
 RANDOM_STATE=2018
 
 def main():
     #READ THE DATA
-    data_df = pd.read_csv("creditcard.csv")
+    data_df = pd.read_csv(INPUT_DATA_PATH)
     if VERBOSE:
         print("Credit Card Fraud Detection data -  rows:",data_df.shape[0]," columns:", data_df.shape[1])
-    with open('final_model.pickle', 'rb') as model_f:
+    #IMPORT THE CHOSEN TRAINED FINAL MODEL
+    with open(INPUT_MODEL_PATH, 'rb') as model_f:
         final_model = pickle.load(model_f)
     
     #PREPROCESS THE DATA
@@ -64,7 +70,8 @@ def main():
         create_confusion_matrix(Y_test, final_model_preds)
     if METRICS:
         compute_metrics(Y_test, final_model_preds, final_model_preds_proba)
-    prediction = pd.DataFrame(final_model_preds, columns=['predictions']).to_csv('prediction.csv')
+    if PERSIST_PREDICTION:
+        prediction = pd.DataFrame(final_model_preds, columns=['predictions']).to_csv(OUTPUT_PREDICTION_PATH)
       
         
         
